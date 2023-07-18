@@ -11,7 +11,7 @@ else:
 
 
 class PolicyNetwork(Module):
-    def __init__(self, state_dim, action_dim, discrete) -> None:
+    def __init__(self, state_dim, action_dim, discrete, device) -> None:
         super().__init__()
 
         self.net = Sequential(
@@ -22,11 +22,12 @@ class PolicyNetwork(Module):
             Linear(50, 50),
             Tanh(),
             Linear(50, action_dim),
-        )
+        ).to(device)
 
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.discrete = discrete
+        self.device = device
 
         if not self.discrete:
             self.log_std = Parameter(torch.zeros(action_dim))
@@ -47,7 +48,7 @@ class PolicyNetwork(Module):
 
 
 class ValueNetwork(Module):
-    def __init__(self, state_dim) -> None:
+    def __init__(self, state_dim, device) -> None:
         super().__init__()
 
         self.net = Sequential(
@@ -58,19 +59,20 @@ class ValueNetwork(Module):
             Linear(50, 50),
             Tanh(),
             Linear(50, 1),
-        )
+        ).to(device)
 
     def forward(self, states):
         return self.net(states)
 
 
 class Discriminator(Module):
-    def __init__(self, state_dim, action_dim, discrete) -> None:
+    def __init__(self, state_dim, action_dim, discrete, device) -> None:
         super().__init__()
 
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.discrete = discrete
+        self.device = device
 
         if self.discrete:
             self.act_emb = Embedding(
@@ -88,7 +90,7 @@ class Discriminator(Module):
             Linear(50, 50),
             Tanh(),
             Linear(50, 1),
-        )
+        ).to(device)
 
     def forward(self, states, actions):
         return torch.sigmoid(self.get_logits(states, actions))
@@ -108,6 +110,7 @@ class Expert(Module):
         state_dim,
         action_dim,
         discrete,
+        device,
         train_config=None
     ) -> None:
         super().__init__()
@@ -116,8 +119,9 @@ class Expert(Module):
         self.action_dim = action_dim
         self.discrete = discrete
         self.train_config = train_config
+        self.device = device
 
-        self.pi = PolicyNetwork(self.state_dim, self.action_dim, self.discrete)
+        self.pi = PolicyNetwork(self.state_dim, self.action_dim, self.discrete, device)
 
     def get_networks(self):
         return [self.pi]
@@ -125,7 +129,7 @@ class Expert(Module):
     def act(self, state):
         self.pi.eval()
 
-        state = FloatTensor(state)
+        state = FloatTensor(state).to(self.device)
         distb = self.pi(state)
 
         action = distb.sample().detach().cpu().numpy()
