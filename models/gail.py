@@ -59,8 +59,8 @@ def worker(
             # # Get the greedy action
             # greedy_action = torch.argmax(action_logits).item()
             
-            # act = expert.predict(ob_tensor)[0]
-            act = 0 
+            act = expert.predict(ob_tensor)[0]
+            # act = 0 
             next_ob, rwd, done, _, _ = env.step(act)
 
             obs_collected = 0
@@ -218,7 +218,7 @@ class GAIL(Module):
         self.pi.eval()
     
         state = FloatTensor(state)
-        distb = self.pi(self.features_extractor(state))
+        distb = self.pi(self.obs2features(state))
         action = distb.sample().detach().cpu().numpy()
 
         # Retrieve the output size
@@ -228,6 +228,10 @@ class GAIL(Module):
 
         return action
 
+    def obs2features(self, obs):
+        if hasattr(self, 'features_extractor'):
+            return self.features_extractor(obs)
+        return obs.flatten(start_dim=-2)
     
     def rollout_worker  (
                             self,
@@ -313,7 +317,7 @@ class GAIL(Module):
 
             # accessing self items
 
-            ep_feat = self.features_extractor(ep_obs)
+            ep_feat = self.obs2features(ep_obs)
             ep_costs = (-1) * torch.log(self.d(ep_feat, ep_acts))\
                 .squeeze().detach()
             ep_disc_costs = ep_gms * ep_costs
@@ -500,11 +504,11 @@ class GAIL(Module):
 
             # obs = self.features_extractor(obs.reshape(-1,10, 7))
             
-
-            self.features_extractor.train()
+            if hasattr(self, 'features_extractor'):
+                self.features_extractor.train()
             self.d.train()
 
-            exp_feat = self.features_extractor(exp_obs)
+            exp_feat = self.obs2features(exp_obs)
             exp_scores = self.d.get_logits(exp_feat, exp_acts)
             nov_scores = self.d.get_logits(obs, acts)
 
