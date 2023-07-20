@@ -19,165 +19,12 @@ torch.set_default_tensor_type(torch.FloatTensor)
 from torch import FloatTensor
 
 
-
-def worker(
-                env_value, 
-                expert, 
-                data_queue, 
-                episode_rewards, 
-                steps_per_worker, 
-                # processes_launched, 
-                worker_id,
-                # progress,
-                lock
-                ):
-    env = env_value.value  # Retrieve the shared env object
-    steps_collected = 0
-    # expert = env.controlled_vehicles[0]
-
-    while steps_collected < steps_per_worker:
-        ob = env.reset()
-        ob=ob[0]
-        done = False
-        ep_rwds = []
-        # print(" Entered worker ", worker_id, " . num_steps ", steps_per_worker,  flush=True)
-        while not done and steps_collected < steps_per_worker:
-            # Extract features from observations using the feature extractor
-            # features_extractor, policy_net, action_net = expert
-            ob_tensor = copy.deepcopy(torch.Tensor(ob).to(torch.device('cpu')))
-            # # print("features_extractor ", id(features_extractor), " obs ", ob_tensor.data_ptr())
-            # features = expert.policy(ob_tensor)
-
-            # # Pass observations through the MLP network
-            # # policy_net = expert.policy.mlp_extractor.policy_net
-            # mlp_features = expert.policy.mlp_extractor.policy_net(features)
-
-            # # Pass features through the action network
-            # # action_net = expert.policy.action_net
-            # action_logits = expert.policy.action_net(mlp_features)
-
-            # # Get the greedy action
-            # greedy_action = torch.argmax(action_logits).item()
-            
-            act = expert.predict(ob_tensor)[0]
-            # act = 0 
-            next_ob, rwd, done, _, _ = env.step(act)
-
-            obs_collected = 0
-            all_obs = []
-            all_acts = []
-            for v in env.road.vehicles:
-                if v is not env.vehicle: 
-                    obs = v.observer
-                    acts = env.action_type.actions_indexes[v.discrete_action]
-                    all_obs.append(obs)
-                    all_acts.append(acts)
-                    obs_collected += 1
-            ob = next_ob
-            # data_queue.put((ob, act))
-            ep_rwds.append(rwd)
-            steps_collected += obs_collected
-
-            # Update progress value
-            if lock.acquire(timeout=1):
-                data_queue.put((all_obs, all_acts))
-                lock.release()
-            # progress.value += obs_collected
-            # print("worker ", worker_id, " steps_collected ", steps_collected,   flush=True)
-        episode_rewards.append(np.sum(ep_rwds))
-        # time.sleep(0.001)
-
-def collect_expert_data(
-                        env,
-                        expert,
-                        num_steps_per_iter
-                        ):
-    exp_rwd_iter = []
-    exp_obs = []
-    exp_acts = []
-    torch.set_num_threads(1)
-    # Create the shared Manager object
-    manager = torch.multiprocessing.Manager()
-    env_value = manager.Value(type(None), None)
-
-    # Create a lock for workers
-    lock = mp.Lock()
-    
-    processes_launched = multiprocessing.Event()
-
-    # Initialize a queue to store expert data
-    exp_data_queue = multiprocessing.Queue()
-
-    # Initialize a list to store episode rewards
-    episode_rewards = manager.list()
-
-    # Determine the number of workers based on available CPU cores
-    num_workers = multiprocessing.cpu_count()
-
-    # Calculate the number of steps per worker
-    num_steps_per_worker = num_steps_per_iter // num_workers
-    # num_steps_per_worker *=1.25 # allocate higher number of episodes than quota, so that free workers can do them w/o a blocking call
-
-    # Create a list to store worker processes
-    worker_processes = []
-
-    env_value.value = env
-    # Launch worker processes for expert data collection
-
-    for i in range(num_workers):
-        
-        worker_process = multiprocessing.Process(
-                                                    target=worker, 
-                                                    args=(
-                                                            copy.deepcopy(env_value), 
-                                                            copy.deepcopy(expert), 
-                                                            exp_data_queue, 
-                                                            episode_rewards, 
-                                                            num_steps_per_worker, 
-                                                            # processes_launched, 
-                                                            i,
-                                                            # progress,
-                                                            lock
-                                                        )
-                                                )
-        worker_processes.append(worker_process)
-        worker_process.start()
-
-
-    pbar_outer = tqdm(total=num_steps_per_iter, desc='Progress of Expert data collection')
-
-    # Collect expert data from the queue
-    # steps_collected = 0
-    while len(exp_acts) < num_steps_per_iter:
-        ob, act = exp_data_queue.get()
-        exp_obs.extend(ob)
-        exp_acts.extend(act)
-        # steps_collected+=1
-        pbar_outer.update(len(exp_acts) - pbar_outer.n)
-
-
-    # Join worker processes to wait for their completion
-    for worker_process in worker_processes:
-        worker_process.join()
-
-    # Close and join the queue
-    exp_data_queue.close()
-    exp_data_queue.join_thread()
-    pbar_outer.close()
-    # Accumulate episode rewards where episodes are done
-    for rwd in episode_rewards:
-        exp_rwd_iter.append(rwd)
-
-    
-    exp_rwd_mean = np.mean(exp_rwd_iter)
-    print(
-        "Expert Reward Mean: {}".format(exp_rwd_mean)
-    )
-
-    exp_obs = FloatTensor(np.array(exp_obs))
-    exp_acts = FloatTensor(np.array(exp_acts))
-
-    return exp_rwd_iter, exp_obs, exp_acts
+# Function to recursively find the last sub-layer of the last layer
+def find_last_sub_layer(module):
+    last_layer = module
+    for layer in module.children():
+        last_layer = find_last_sub_layer(layer)
+    return last_layer
 
 
 
@@ -202,14 +49,15 @@ class GAIL(Module):
                                                                                     self.train_config['observation_space'],
                                                                                     **self.train_config['features_extractor_kwargs']
                                                                                     )
+            # self.feature_dim = find_last_sub_layer(self.features_extractor).out_features # Assuming linear layer 
             self.feature_dim = 64
 
 
 
-        self.pi =  PolicyNetwork(self.feature_dim, self.action_dim, self.discrete).to(device=device)
+        self.pi =  PolicyNetwork(self.feature_dim, self.action_dim, self.discrete, device=device).to(device=device)
                            
-        self.v = ValueNetwork(self.feature_dim).to(device=device)
-        self.d = Discriminator(self.feature_dim, self.action_dim, self.discrete).to(device=device)
+        self.v = ValueNetwork(self.feature_dim,device=device).to(device=device)
+        self.d = Discriminator(self.feature_dim, self.action_dim, self.discrete, device=device).to(device=device)
 
     def get_networks(self):
         return [self.pi, self.v]
@@ -318,7 +166,8 @@ class GAIL(Module):
             # accessing self items
 
             ep_feat = self.obs2features(ep_obs)
-            ep_costs = (-1) * torch.log(self.d(ep_feat, ep_acts))\
+            discriminator = self.d(ep_feat, torch.squeeze(ep_acts))
+            ep_costs = (-1) * torch.log(discriminator)\
                 .squeeze().detach()
             ep_disc_costs = ep_gms * ep_costs
 
@@ -455,7 +304,7 @@ class GAIL(Module):
 
         return rwd_iter, obs, acts, rets, advs, gms
 
-    def train(self, env, expert, render=False):
+    def train(self, env, exp_obs, exp_acts, expert, render=False):
 
         optimal_agent = "optimal_gail_agent.pth"
         optimal_reward = -float('inf')
@@ -476,11 +325,7 @@ class GAIL(Module):
 
         opt_d = torch.optim.Adam(self.d.parameters())
 
-        exp_rwd_iter, exp_obs, exp_acts   =           collect_expert_data  (
-                                                                                env,
-                                                                                expert,
-                                                                                num_expert_steps
-                                                                            )
+
         
         # exp_obs = self.features_extractor(exp_obs).detach()
         rwd_iter_means = []
@@ -510,7 +355,7 @@ class GAIL(Module):
 
             exp_feat = self.obs2features(exp_obs)
             exp_scores = self.d.get_logits(exp_feat, exp_acts)
-            nov_scores = self.d.get_logits(obs, acts)
+            nov_scores = self.d.get_logits(obs, torch.squeeze(acts))
 
             opt_d.zero_grad()
             loss = torch.nn.functional.binary_cross_entropy_with_logits(
@@ -624,5 +469,6 @@ class GAIL(Module):
                 torch.save(self.state_dict(), optimal_agent)
 
         torch.save(self.state_dict(), 'gail_agent.pth')
-        return rwd_iter_means
+        return rwd_iter_means, optimal_agent
         # return exp_rwd_mean, rwd_iter_means
+
