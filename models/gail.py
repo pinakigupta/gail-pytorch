@@ -237,7 +237,7 @@ class GAIL(Module):
         lock = mp.Lock()
 
          # Determine the number of workers based on available CPU cores
-        num_workers = multiprocessing.cpu_count()
+        num_workers = 50 #multiprocessing.cpu_count()
         manager = torch.multiprocessing.Manager()
         # progress = manager.Value('i', 0)
         progress = [0]
@@ -304,7 +304,7 @@ class GAIL(Module):
 
         return rwd_iter, obs, acts, rets, advs, gms
 
-    def train(self, env, exp_obs, exp_acts, expert, render=False):
+    def train(self, env, exp_obs, exp_acts, render=False):
 
         optimal_agent = "optimal_gail_agent.pth"
         optimal_reward = -float('inf')
@@ -471,4 +471,5 @@ class GAIL(Module):
         torch.save(self.state_dict(), 'gail_agent.pth')
         return rwd_iter_means, optimal_agent
         # return exp_rwd_mean, rwd_iter_means
+
 

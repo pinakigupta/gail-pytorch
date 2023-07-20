@@ -87,6 +87,7 @@ def worker(
             ep_rwds.append(rwd)
             steps_collected += obs_collected
 
+        # print("all_obs ", len(all_obs))
         # Update progress value
         if lock.acquire(timeout=1):
             for (id1 , ep_obs), (id2, ep_acts) in zip(all_obs.items(), all_acts.items()):
@@ -124,7 +125,7 @@ def collect_expert_data(
     episode_rewards = manager.list()
 
     # Determine the number of workers based on available CPU cores
-    num_workers = multiprocessing.cpu_count()
+    num_workers = max(multiprocessing.cpu_count()-5,1)
 
     # Calculate the number of steps per worker
     num_steps_per_worker = num_steps_per_iter // num_workers
@@ -166,11 +167,15 @@ def collect_expert_data(
         exp_acts.extend(act)
         # steps_collected+=1
         pbar_outer.update(len(exp_acts) - pbar_outer.n)
+    
+    print(" joining worker processes ", [worker.pid for worker in worker_processes], flush=True)
 
 
     # Join worker processes to wait for their completion
     for worker_process in worker_processes:
-        worker_process.join()
+        worker_process.terminate()
+
+    print(" End of worker_process join")
 
     # Close and join the queue
     exp_data_queue.close()
@@ -186,10 +191,11 @@ def collect_expert_data(
         "Expert Reward Mean: {}".format(exp_rwd_mean)
     )
 
-    exp_obs = FloatTensor(np.array(exp_obs))
-    exp_acts = FloatTensor(np.array(exp_acts))
+    exp_obs = np.array(exp_obs)
+    exp_acts = np.array(exp_acts)
 
     return exp_rwd_iter, exp_obs, exp_acts
+
 
 
 
